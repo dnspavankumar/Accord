@@ -1,0 +1,6 @@
+{
+  "name": "Accord Protocol Gateway",
+  "description": "Open protocol bridge and policy-gated payment gateway for AI buyer agents using AP2 and Razorpay.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
