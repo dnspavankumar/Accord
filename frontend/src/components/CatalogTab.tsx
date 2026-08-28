@@ -1,19 +1,21 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Product, GuardrailPolicy, AuditLogEvent } from '../types/accord';
-import { executeMandate } from '../api';
+import { Product, GuardrailPolicy, AuditLogEvent, MerchantProductInput } from '../types/accord';
+import { archiveMerchantProduct, confirmCheckout, createMerchantProduct, prepareCheckout, updateMerchantProduct } from '../api';
 
 interface CatalogTabProps {
   products: Product[];
   currentPolicy: GuardrailPolicy;
   onExecuteAgentMandate?: (event: AuditLogEvent) => void;
+  onProductsChanged?: () => void;
 }
 
 export const CatalogTab: React.FC<CatalogTabProps> = ({
   products,
   currentPolicy,
   onExecuteAgentMandate,
+  onProductsChanged,
 }) => {
   // Global or per-card toggle mode
   const [viewModes, setViewModes] = useState<Record<string, 'STOREFRONT' | 'JSONLD'>>({});
@@ -23,6 +25,12 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
   const [executionResult, setExecutionResult] = useState<AuditLogEvent | null>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
+  const [showAddProduct, setShowAddProduct] = useState(false);
+  const [editingSku, setEditingSku] = useState<string | null>(null);
+  const [productError, setProductError] = useState<string | null>(null);
+  const [newProduct, setNewProduct] = useState<MerchantProductInput>({
+    sku: '', name: '', description: '', price: 0, stock_quantity: 0, category: '',
+  });
 
   const toggleViewMode = (sku: string) => {
     setViewModes((prev) => ({
@@ -38,6 +46,42 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
     setExecutionError(null);
   };
 
+  const handleAddProduct = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setProductError(null);
+    try {
+      if (editingSku) {
+        const { sku: _sku, ...editableProduct } = newProduct;
+        await updateMerchantProduct(editingSku, editableProduct);
+      } else {
+        await createMerchantProduct(newProduct);
+      }
+      setNewProduct({ sku: '', name: '', description: '', price: 0, stock_quantity: 0, category: '' });
+      setShowAddProduct(false);
+      setEditingSku(null);
+      onProductsChanged?.();
+    } catch (error) {
+      setProductError(error instanceof Error ? error.message : 'Unable to create product.');
+    }
+  };
+
+  const handleEditProduct = (product: Product) => {
+    setEditingSku(product.sku);
+    setNewProduct({ sku: product.sku, name: product.name, description: '', price: product.price, stock_quantity: product.stock, category: product.category });
+    setProductError(null);
+    setShowAddProduct(true);
+  };
+
+  const handleArchiveProduct = async (sku: string) => {
+    if (!window.confirm(`Archive product ${sku}? It will no longer be available to agents.`)) return;
+    try {
+      await archiveMerchantProduct(sku);
+      onProductsChanged?.();
+    } catch (error) {
+      setProductError(error instanceof Error ? error.message : 'Unable to archive product.');
+    }
+  };
+
   const handleRunAgentMandate = async () => {
     if (!selectedProduct) return;
     setIsExecuting(true);
@@ -45,18 +89,41 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
 
     const totalAmount = selectedProduct.price * testQuantity;
     try {
-      const result = await executeMandate({
+      const checkout = await prepareCheckout({
         protocol_version: 'AP2-2026',
         buyer_agent_id: testAgentId,
         cart: [{ sku: selectedProduct.sku, quantity: testQuantity, unit_price: selectedProduct.price }],
         max_authorized_amount: totalAmount,
         currency: 'INR',
-        payment_method: { provider: 'razorpay', token: 'tok_test_card_success', simulate_failure: false },
       });
+      let result: AuditLogEvent;
+      if (checkout.key_id) {
+        await loadRazorpayCheckout();
+        const Razorpay = (window as Window & { Razorpay?: new (options: Record<string, unknown>) => { open: () => void } }).Razorpay;
+        if (!Razorpay) throw new Error('Razorpay Checkout could not be loaded.');
+        result = await new Promise<AuditLogEvent>((resolve, reject) => {
+          const instance = new Razorpay({
+            key: checkout.key_id,
+            amount: checkout.amount_in_paise,
+            currency: checkout.currency,
+            name: 'Accord Merchant',
+            description: selectedProduct.name,
+            order_id: checkout.order_id,
+            handler: async (response: { razorpay_payment_id: string; razorpay_signature: string }) => {
+              try { resolve(await confirmCheckout(checkout.transaction_id, response)); } catch (error) { reject(error); }
+            },
+            modal: { ondismiss: () => reject(new Error('Payment window was closed before completion.')) },
+          });
+          instance.open();
+        });
+      } else {
+        result = await confirmCheckout(checkout.transaction_id, {
+          razorpay_payment_id: 'pay_simulated_checkout',
+          razorpay_signature: 'sig_simulated',
+        });
+      }
       setExecutionResult(result);
       onExecuteAgentMandate?.(result);
-      setIsExecuting(false);
-      return;
     } catch (error) {
       console.error('Mandate execution failed', error);
       setIsExecuting(false);
@@ -136,6 +203,15 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
     }, 600);
   };
 
+  const loadRazorpayCheckout = () => new Promise<void>((resolve, reject) => {
+    if ((window as Window & { Razorpay?: unknown }).Razorpay) return resolve();
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Unable to load Razorpay Checkout.'));
+    document.body.appendChild(script);
+  });
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -149,8 +225,24 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
           <span className="font-sans text-xs font-semibold text-zinc-600 border border-zinc-200 px-3 py-1.5 bg-white tracking-wide">
             ACTIVE GUARDRAIL: MAX ₹{currentPolicy.max_transaction_limit_inr.toLocaleString('en-IN')} / TX
           </span>
+          <button onClick={() => { setProductError(null); setEditingSku(null); setShowAddProduct(true); }} className="bg-zinc-900 text-white font-sans text-xs font-bold tracking-wider uppercase px-3 py-2">ADD PRODUCT</button>
         </div>
       </div>
+
+      {productError && <div className="border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700">{productError}</div>}
+
+      {showAddProduct && (
+        <form onSubmit={handleAddProduct} className="bg-white border border-zinc-200 p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-zinc-100 pb-3"><span className="font-sans text-xs font-bold uppercase tracking-wider">{editingSku ? 'EDIT MERCHANT PRODUCT' : 'ADD MERCHANT PRODUCT'}</span><button type="button" onClick={() => { setShowAddProduct(false); setEditingSku(null); }} className="font-sans text-xs uppercase text-zinc-500">CLOSE</button></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {([['sku', 'SKU'], ['name', 'PRODUCT NAME'], ['category', 'CATEGORY']] as const).map(([field, label]) => <label key={field} className="font-sans text-xs font-bold uppercase tracking-wider text-zinc-700">{label}<input required readOnly={field === 'sku' && Boolean(editingSku)} value={newProduct[field]} onChange={(e) => setNewProduct((current) => ({ ...current, [field]: e.target.value }))} className="mt-1 w-full border border-zinc-300 px-3 py-2 text-sm font-normal normal-case tracking-normal read-only:bg-zinc-50" /></label>)}
+            <label className="font-sans text-xs font-bold uppercase tracking-wider text-zinc-700">PRICE (INR)<input required type="number" min="0.01" step="0.01" value={newProduct.price || ''} onChange={(e) => setNewProduct((current) => ({ ...current, price: Number(e.target.value) }))} className="mt-1 w-full border border-zinc-300 px-3 py-2 text-sm font-normal tracking-normal" /></label>
+            <label className="font-sans text-xs font-bold uppercase tracking-wider text-zinc-700">STOCK<input required type="number" min="0" value={newProduct.stock_quantity} onChange={(e) => setNewProduct((current) => ({ ...current, stock_quantity: Number(e.target.value) }))} className="mt-1 w-full border border-zinc-300 px-3 py-2 text-sm font-normal tracking-normal" /></label>
+            <label className="font-sans text-xs font-bold uppercase tracking-wider text-zinc-700 sm:col-span-2 lg:col-span-3">DESCRIPTION<input value={newProduct.description} onChange={(e) => setNewProduct((current) => ({ ...current, description: e.target.value }))} className="mt-1 w-full border border-zinc-300 px-3 py-2 text-sm font-normal normal-case tracking-normal" /></label>
+          </div>
+          <button type="submit" className="bg-zinc-900 text-white font-sans text-xs font-bold uppercase tracking-wider px-5 py-2.5">{editingSku ? 'SAVE PRODUCT' : 'CREATE PRODUCT'}</button>
+        </form>
+      )}
 
       {/* 3-Column Grid of White Cards with Thin Black Borders */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -224,6 +316,8 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
                 >
                   TEST AGENT MANDATE
                 </button>
+                <button onClick={() => handleEditProduct(product)} className="mt-2 w-full border border-zinc-300 text-zinc-600 hover:border-zinc-900 hover:text-zinc-900 font-sans text-[10px] font-bold tracking-wider uppercase px-4 py-2">EDIT PRODUCT</button>
+                <button onClick={() => handleArchiveProduct(product.sku)} className="mt-2 w-full border border-zinc-300 text-zinc-600 hover:border-rose-400 hover:text-rose-700 font-sans text-[10px] font-bold tracking-wider uppercase px-4 py-2">ARCHIVE PRODUCT</button>
               </div>
             </div>
           );
@@ -373,7 +467,7 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
                 disabled={isExecuting}
                 className="flex-1 bg-zinc-900 hover:bg-black text-white font-sans text-xs font-bold uppercase tracking-wider px-4 py-3 rounded-none transition-colors disabled:opacity-50"
               >
-                {isExecuting ? 'EVALUATING AP2 POLICY...' : 'SIGN & EXECUTE MANDATE'}
+                {isExecuting ? 'PREPARING SECURE CHECKOUT...' : 'REVIEW & PAY WITH RAZORPAY'}
               </button>
               <button
                 onClick={() => setSelectedProduct(null)}

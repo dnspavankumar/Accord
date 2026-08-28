@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import hmac
+import hashlib
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
@@ -80,3 +82,21 @@ class RazorpayClient:
         if payment_id != "tok_test_card_success":
             raise RazorpayError("Primary payment token was declined by the test gateway.")
         return {"id": "pay_sim_card_success", "entity": "payment", "amount": amount_in_paise, "status": "captured"}
+
+    def verify_payment_signature(self, order_id: str, payment_id: str, signature: str) -> bool:
+        """Verify the signature returned by Razorpay Checkout."""
+        if self.key_secret is None:
+            return signature == "sig_simulated" and order_id.startswith("order_sim_")
+        expected = hmac.new(
+            self.key_secret.encode("utf-8"),
+            f"{order_id}|{payment_id}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
+    @staticmethod
+    def verify_webhook_signature(body: bytes, signature: str, secret: str | None) -> bool:
+        if not secret:
+            return False
+        expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)

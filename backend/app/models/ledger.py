@@ -22,6 +22,7 @@ class PolicyStatus(str, enum.Enum):
 class ExecutionStatus(str, enum.Enum):
     INITIATED = "INITIATED"
     GATED = "GATED"
+    PENDING_PAYMENT = "PENDING_PAYMENT"
     SETTLED = "SETTLED"
     FAILED_RECOVERED = "FAILED_RECOVERED"
     TERMINATED = "TERMINATED"

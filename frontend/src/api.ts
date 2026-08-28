@@ -1,4 +1,4 @@
-import { AuditLogEvent, BackendCatalog, GuardrailPolicy, IntentMandate, MerchantDashboard, Product } from './types/accord';
+import { AuditLogEvent, BackendCatalog, CheckoutPrepareResponse, GuardrailPolicy, IntentMandate, MerchantDashboard, MerchantProductInput, Product } from './types/accord';
 
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -8,6 +8,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
   });
   if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -31,6 +32,20 @@ function mapTransaction(transaction: AuditLogEvent): AuditLogEvent {
 }
 
 export const getCatalog = () => request<BackendCatalog>('/api/v1/ap2/catalog');
+export const createMerchantProduct = (product: MerchantProductInput) =>
+  request<MerchantProductInput & { is_active: boolean }>('/api/v1/merchant/catalog', {
+    method: 'POST', body: JSON.stringify({ ...product, currency: 'INR' }),
+  });
+export const archiveMerchantProduct = (sku: string) =>
+  request<void>(`/api/v1/merchant/catalog/${encodeURIComponent(sku)}`, { method: 'DELETE' });
+export const updateMerchantProduct = (sku: string, product: Omit<MerchantProductInput, 'sku'>) =>
+  request<MerchantProductInput & { is_active: boolean }>(`/api/v1/merchant/catalog/${encodeURIComponent(sku)}`, {
+    method: 'PATCH', body: JSON.stringify(product),
+  });
+export const prepareCheckout = (input: Omit<IntentMandate, 'payment_method'>) =>
+  request<CheckoutPrepareResponse>('/api/v1/accord/merchant/checkout/prepare', { method: 'POST', body: JSON.stringify(input) });
+export const confirmCheckout = (transactionId: string, payment: { razorpay_payment_id: string; razorpay_signature: string }) =>
+  request<AuditLogEvent>(`/api/v1/accord/merchant/checkout/${transactionId}/confirm`, { method: 'POST', body: JSON.stringify(payment) });
 export const getTransactions = async () =>
   (await request<AuditLogEvent[]>('/api/v1/accord/transactions')).map(mapTransaction);
 export const getPolicy = () => request<GuardrailPolicy>('/api/v1/accord/policy');

@@ -6,9 +6,12 @@ export const MerchantTab: React.FC = () => {
   const [dashboard, setDashboard] = useState<MerchantDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadDashboard = () => {
+    setError(null);
     getMerchantDashboard().then(setDashboard).catch((reason: Error) => setError(reason.message));
-  }, []);
+  };
+
+  useEffect(() => { loadDashboard(); }, []);
 
   const formatAmount = (amount: number) => `₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
   const formatDate = (timestamp: string) => new Date(timestamp).toLocaleString('en-IN', {
@@ -34,7 +37,7 @@ export const MerchantTab: React.FC = () => {
           </div>
 
           <div className="bg-white border border-zinc-200">
-            <div className="px-6 py-4 border-b border-zinc-200 font-sans text-xs font-bold uppercase tracking-wider text-zinc-900">RECENT RECEIVED PAYMENTS</div>
+            <div className="px-6 py-4 border-b border-zinc-200 flex items-center justify-between"><span className="font-sans text-xs font-bold uppercase tracking-wider text-zinc-900">RECENT RECEIVED PAYMENTS</span><button onClick={loadDashboard} className="font-sans text-[10px] font-bold uppercase tracking-wider text-zinc-500 hover:text-zinc-900">REFRESH</button></div>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead><tr className="border-b border-zinc-200 bg-[#fafafa]">

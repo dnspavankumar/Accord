@@ -396,6 +396,53 @@ Accord is built around four core principles:
 Accord provides a secure protocol layer between autonomous AI buyer agents and merchant payment infrastructure.
 
 By combining **AP2/UAP-compatible commerce interfaces**, **deterministic policy enforcement**, **headless Razorpay execution**, and a **cryptographically auditable ledger**, Accord enables autonomous commerce without giving AI agents unrestricted access to financial rails.
+
+## 10. Production Merchant Checkout Workflow
+
+The merchant application supports two payment modes:
+
+1. **AP2 headless execution** for an already-authorized buyer-agent payment token.
+2. **Razorpay Checkout** for a human-approved merchant checkout session.
+
+The human-approved flow is:
+
+```text
+POST /api/v1/merchant/checkout/prepare
+  → validate mandate, policy, price, stock, and inventory reservation
+  → create a Razorpay order
+  → return checkout options to the frontend
+
+Merchant reviews the order and confirms payment in Razorpay Checkout
+
+POST /api/v1/merchant/checkout/{transaction_id}/confirm
+  → verify Razorpay order/payment/signature
+  → settle the ledger and keep the payment ID
+
+POST /api/v1/merchant/webhooks/razorpay
+  → verify the webhook signature
+  → idempotently settle captured payments
+```
+
+### Razorpay production configuration
+
+Create `backend/.env` and never commit it:
+
+```env
+RAZORPAY_KEY_ID=rzp_test_your_key_id
+RAZORPAY_KEY_SECRET=your_key_secret
+RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
+```
+
+Use Razorpay test keys until the complete payment and webhook flow has been verified. The local simulation remains available when credentials are absent. The merchant dashboard counts only transactions with a recorded payment ID as received money.
+
+### Production readiness checklist
+
+- [ ] Configure Razorpay test credentials and webhook URL.
+- [ ] Verify Checkout signature before marking a transaction settled.
+- [ ] Verify webhook signatures and process events idempotently.
+- [ ] Use PostgreSQL or another production database instead of local SQLite.
+- [ ] Add authentication and merchant tenancy before exposing the API publicly.
+- [ ] Configure HTTPS, CORS origins, logging, backups, and payment reconciliation.
 # Accord
 # Accord
 # Accord

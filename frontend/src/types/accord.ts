@@ -83,6 +83,24 @@ export interface MerchantDashboard {
   payments: AuditLogEvent[];
 }
 
+export interface MerchantProductInput {
+  sku: string;
+  name: string;
+  description: string;
+  price: number;
+  stock_quantity: number;
+  category: string;
+}
+
+export interface CheckoutPrepareResponse {
+  transaction_id: string;
+  order_id: string;
+  key_id: string | null;
+  amount_in_paise: number;
+  currency: string;
+  status: ExecutionStatus;
+}
+
 export interface GuardrailPolicy {
   max_transaction_limit_inr: number;
   max_item_quantity: number;

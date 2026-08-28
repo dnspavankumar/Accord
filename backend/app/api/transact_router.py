@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import uuid
+import json
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,8 @@ from ..database import get_session
 from ..models.ledger import AuditLedger, ExecutionStatus, PolicyStatus
 from ..models.product import Product
 from ..schemas.ap2_mandate import IntentMandate
+from ..schemas.ap2_mandate import CartItem
+from ..config import get_settings
 from ..services.guardrail_engine import GuardrailEngine
 from ..services.razorpay_client import RazorpayClient, RazorpayError
 from ..services.recovery_engine import RecoveryEngine, RecoveryResult
@@ -47,6 +51,28 @@ class MerchantDashboardResponse(BaseModel):
     received_payment_count: int
     recovered_payment_count: int
     payments: list[TransactionResponse]
+
+
+class CheckoutPrepareRequest(BaseModel):
+    protocol_version: Literal["AP2-2026"] = "AP2-2026"
+    buyer_agent_id: str
+    cart: list[CartItem] = Field(min_length=1)
+    max_authorized_amount: Decimal = Field(gt=0, decimal_places=2, max_digits=12)
+    currency: Literal["INR"] = "INR"
+
+
+class CheckoutPrepareResponse(BaseModel):
+    transaction_id: uuid.UUID
+    order_id: str
+    key_id: str | None
+    amount_in_paise: int
+    currency: str
+    status: ExecutionStatus
+
+
+class CheckoutConfirmRequest(BaseModel):
+    razorpay_payment_id: str = Field(min_length=1, max_length=128)
+    razorpay_signature: str = Field(min_length=1, max_length=256)
 
 
 async def _publish(ledger: AuditLedger, explanation: str) -> None:
@@ -146,6 +172,104 @@ async def merchant_dashboard(
         .order_by(AuditLedger.timestamp.desc())
         .limit(limit)
     )
+
+
+@router.post("/merchant/checkout/prepare", response_model=CheckoutPrepareResponse)
+async def prepare_checkout(
+    mandate: CheckoutPrepareRequest,
+    session: AsyncSession = Depends(get_session),
+) -> CheckoutPrepareResponse:
+    """Validate a merchant checkout and create an unpaid Razorpay order."""
+    full_mandate = IntentMandate(
+        buyer_agent_id=mandate.buyer_agent_id,
+        cart=mandate.cart,
+        max_authorized_amount=mandate.max_authorized_amount,
+        currency=mandate.currency,
+        payment_method={"provider": "razorpay", "token": "checkout_pending"},
+    )
+    guardrails = GuardrailEngine(session=session, settings=get_policy())
+    policy = await guardrails.evaluate_mandate(full_mandate)
+    if not policy.approved:
+        raise HTTPException(status_code=422, detail=policy.reason)
+
+    ledger = AuditLedger(
+        transaction_id=uuid.uuid4(),
+        buyer_agent_id=mandate.buyer_agent_id,
+        intent_hash=policy.intent_hash,
+        requested_amount=policy.total_amount,
+        policy_status=policy.policy_status,
+        execution_status=ExecutionStatus.PENDING_PAYMENT,
+    )
+    try:
+        await _reserve_inventory(session, full_mandate)
+        order = RazorpayClient().create_order(
+            amount_in_paise=RazorpayClient.to_paise(policy.total_amount),
+            currency=mandate.currency,
+            receipt_id=str(ledger.transaction_id),
+        )
+        ledger.razorpay_order_id = order.get("id")
+        session.add(ledger)
+        await session.commit()
+    except (RazorpayError, ValueError) as exc:
+        await session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return CheckoutPrepareResponse(
+        transaction_id=ledger.transaction_id,
+        order_id=ledger.razorpay_order_id,
+        key_id=get_settings().razorpay_key_id,
+        amount_in_paise=RazorpayClient.to_paise(policy.total_amount),
+        currency=mandate.currency,
+        status=ledger.execution_status,
+    )
+
+
+@router.post("/merchant/checkout/{transaction_id}/confirm", response_model=TransactionResponse)
+async def confirm_checkout(
+    transaction_id: uuid.UUID,
+    payment: CheckoutConfirmRequest,
+    session: AsyncSession = Depends(get_session),
+) -> TransactionResponse:
+    """Verify Checkout's order/payment signature and settle the ledger."""
+    ledger = await session.get(AuditLedger, transaction_id)
+    if ledger is None or ledger.razorpay_order_id is None:
+        raise HTTPException(status_code=404, detail="Checkout transaction not found.")
+    if ledger.execution_status == ExecutionStatus.SETTLED:
+        return _response(ledger, "Payment was already verified.")
+    if ledger.execution_status != ExecutionStatus.PENDING_PAYMENT:
+        raise HTTPException(status_code=409, detail="Checkout is not awaiting payment.")
+    if not RazorpayClient().verify_payment_signature(
+        ledger.razorpay_order_id, payment.razorpay_payment_id, payment.razorpay_signature
+    ):
+        raise HTTPException(status_code=400, detail="Razorpay payment signature verification failed.")
+    ledger.razorpay_payment_id = payment.razorpay_payment_id
+    ledger.execution_status = ExecutionStatus.SETTLED
+    await session.commit()
+    await _publish(ledger, "Razorpay Checkout payment verified and settled.")
+    return _response(ledger, "Razorpay Checkout payment verified and settled.")
+
+
+@router.post("/merchant/webhooks/razorpay", status_code=status.HTTP_204_NO_CONTENT)
+async def razorpay_webhook(request: Request, session: AsyncSession = Depends(get_session)) -> None:
+    """Accept captured-payment webhooks after verifying Razorpay's signature."""
+    body = await request.body()
+    signature = request.headers.get("x-razorpay-signature", "")
+    if not RazorpayClient.verify_webhook_signature(body, signature, get_settings().razorpay_webhook_secret):
+        raise HTTPException(status_code=400, detail="Invalid Razorpay webhook signature.")
+    payload = json.loads(body)
+    if payload.get("event") != "payment.captured":
+        return
+    entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+    order_id = entity.get("order_id")
+    payment_id = entity.get("id")
+    if not order_id or not payment_id:
+        return
+    ledger = await session.scalar(select(AuditLedger).where(AuditLedger.razorpay_order_id == order_id))
+    if ledger is None or ledger.execution_status == ExecutionStatus.SETTLED:
+        return
+    ledger.razorpay_payment_id = payment_id
+    ledger.execution_status = ExecutionStatus.SETTLED
+    await session.commit()
     ledgers = list(rows.scalars().all())
     successful = [
         ledger for ledger in ledgers

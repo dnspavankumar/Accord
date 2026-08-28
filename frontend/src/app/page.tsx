@@ -10,8 +10,6 @@ import { PolicyTab } from '../components/PolicyTab';
 import { ProfileTab } from '../components/ProfileTab';
 import { MerchantTab } from '../components/MerchantTab';
 import {
-  INITIAL_AUDIT_LOGS,
-  INITIAL_PRODUCTS,
   INITIAL_POLICY,
   INITIAL_USER_PROFILE,
 } from '../data/mockData';
@@ -19,10 +17,11 @@ import { getCatalog, getPolicy, getTransactions, mapCatalog } from '../api';
 
 export default function AccordConsolePage() {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
-  const [events, setEvents] = useState<AuditLogEvent[]>(INITIAL_AUDIT_LOGS);
+  const [events, setEvents] = useState<AuditLogEvent[]>([]);
   const [policy, setPolicy] = useState<GuardrailPolicy>(INITIAL_POLICY);
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+  const [products, setProducts] = useState<Product[]>([]);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<UserProfile>(INITIAL_USER_PROFILE);
 
   useEffect(() => {
@@ -31,8 +30,10 @@ export default function AccordConsolePage() {
         setProducts(mapCatalog(catalog));
         setEvents(transactions);
         setPolicy(livePolicy);
+        setApiError(null);
       })
-      .catch((error: Error) => setApiError(error.message));
+      .catch((error: Error) => setApiError(error.message))
+      .finally(() => setIsLoading(false));
   }, []);
 
   const handleAddEvent = (newEvent: AuditLogEvent) => {
@@ -43,6 +44,10 @@ export default function AccordConsolePage() {
     setPolicy(updatedPolicy);
   };
 
+  const reloadCatalog = () => {
+    getCatalog().then((catalog) => setProducts(mapCatalog(catalog))).catch((error: Error) => setApiError(error.message));
+  };
+
   return (
     <div className="min-h-screen bg-[#fafafa] text-zinc-900 font-sans flex flex-col">
       {/* Top Navbar */}
@@ -50,7 +55,8 @@ export default function AccordConsolePage() {
 
       {/* Main Page Container */}
       <main className="max-w-7xl mx-auto px-8 py-8 w-full flex-1">
-        {apiError && <div className="mb-4 border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">Backend unavailable; showing local preview data. Start the API to use live catalog and execution.</div>}
+        {apiError && <div className="mb-4 border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700">Backend unavailable. Start the API to load live merchant data: {apiError}</div>}
+        {isLoading && <div className="mb-4 border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-500">Connecting to Accord backend...</div>}
         {activeTab === 'overview' && (
           <OverviewTab
             events={events}
@@ -70,6 +76,7 @@ export default function AccordConsolePage() {
             products={products}
             currentPolicy={policy}
             onExecuteAgentMandate={handleAddEvent}
+            onProductsChanged={reloadCatalog}
           />
         )}
 
