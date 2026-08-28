@@ -397,3 +397,4 @@ Accord provides a secure protocol layer between autonomous AI buyer agents and m
 
 By combining **AP2/UAP-compatible commerce interfaces**, **deterministic policy enforcement**, **headless Razorpay execution**, and a **cryptographically auditable ledger**, Accord enables autonomous commerce without giving AI agents unrestricted access to financial rails.
 # Accord
+# Accord
