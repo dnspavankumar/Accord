@@ -1,16 +1,20 @@
-import { AuditLogEvent, BackendCatalog, CheckoutPrepareResponse, GuardrailPolicy, IntentMandate, MerchantProductInput, Product } from './types/accord';
+import { AuditLogEvent, AuthResponse, BackendCatalog, CheckoutPrepareResponse, GuardrailPolicy, IntentMandate, MerchantProductInput, Product } from './types/accord';
 
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('accord_access_token') : null;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options?.headers || {}) },
   });
   if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
+
+export const login = (email: string, password: string) => request<AuthResponse>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+export const register = (name: string, email: string, password: string, merchant_name: string) => request<AuthResponse>('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, merchant_name }) });
 
 export function mapCatalog(catalog: BackendCatalog): Product[] {
   return catalog.dataFeedElement.map((item) => ({

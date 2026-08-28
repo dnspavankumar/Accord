@@ -2,12 +2,11 @@
 
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .config import get_settings
-from .models import Base, PolicyConfig, Product
-from .schemas.policy import PolicySettings
+from .models import Base, Product
 
 settings = get_settings()
 engine = create_async_engine(settings.database_url, future=True)
@@ -67,6 +66,32 @@ async def init_db() -> None:
     """Create tables and seed a catalog for a fresh local database."""
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        if connection.dialect.name == "mysql":
+            # create_all does not alter tables that already exist. These
+            # additive migrations keep existing local MySQL data intact.
+            for table, column in (
+                ("products", "merchant_id"),
+                ("audit_ledger", "merchant_id"),
+                ("policy_config", "merchant_id"),
+            ):
+                exists = await connection.execute(text(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table "
+                    "AND COLUMN_NAME = :column"
+                ), {"table": table, "column": column})
+                if not exists.scalar_one():
+                    await connection.execute(text(
+                        f"ALTER TABLE `{table}` ADD COLUMN `{column}` CHAR(32) NULL"
+                    ))
+            legacy_policy_id = await connection.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'policy_config' "
+                "AND COLUMN_NAME = 'id'"
+            ))
+            if legacy_policy_id.scalar_one():
+                await connection.execute(text(
+                    "ALTER TABLE `policy_config` MODIFY COLUMN `id` INT NOT NULL AUTO_INCREMENT"
+                ))
     async with SessionLocal() as session:
         existing_skus = set((await session.scalars(select(Product.sku))).all())
         missing_products = [
@@ -81,16 +106,6 @@ async def init_db() -> None:
         ]
         if missing_products:
             session.add_all(missing_products)
-        if await session.get(PolicyConfig, 1) is None:
-            defaults = PolicySettings()
-            session.add(PolicyConfig(
-                id=1,
-                max_transaction_limit_inr=defaults.max_transaction_limit_inr,
-                max_quantity_per_item=defaults.max_quantity_per_item,
-                allowed_currency=defaults.allowed_currency,
-                velocity_limit=defaults.velocity_limit,
-                velocity_window_seconds=defaults.velocity_window_seconds,
-            ))
         await session.commit()
 
 

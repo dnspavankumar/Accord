@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 import json
+import hashlib
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
@@ -14,8 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
-from ..models.ledger import AuditLedger, ExecutionStatus, PolicyStatus
+from ..models.ledger import AuditLedger, ExecutionStatus, PaymentEvent, PolicyStatus, TransactionItem
 from ..models.product import Product
+from ..models import Merchant
 from ..schemas.ap2_mandate import IntentMandate
 from ..schemas.ap2_mandate import CartItem
 from ..config import get_settings
@@ -23,6 +25,7 @@ from ..services.guardrail_engine import GuardrailEngine
 from ..services.razorpay_client import RazorpayClient, RazorpayError
 from ..services.recovery_engine import RecoveryEngine, RecoveryResult
 from ..services.policy_service import get_policy
+from ..security import get_current_merchant
 
 from .telemetry import telemetry_hub
 
@@ -93,12 +96,14 @@ def _cart_amount(mandate: IntentMandate) -> Decimal:
     )
 
 
-async def _reserve_inventory(session: AsyncSession, mandate: IntentMandate) -> None:
+async def _reserve_inventory(session: AsyncSession, mandate: IntentMandate, merchant_id: uuid.UUID) -> None:
     quantities: dict[str, int] = {}
     for item in mandate.cart:
         quantities[item.sku] = quantities.get(item.sku, 0) + item.quantity
     rows = await session.execute(
-        select(Product).where(Product.sku.in_(quantities), Product.is_active.is_(True))
+        select(Product)
+        .where(Product.sku.in_(quantities), Product.merchant_id == merchant_id, Product.is_active.is_(True))
+        .with_for_update()
     )
     products = {product.sku: product for product in rows.scalars().all()}
     for sku, quantity in quantities.items():
@@ -110,16 +115,35 @@ async def _reserve_inventory(session: AsyncSession, mandate: IntentMandate) -> N
     await session.flush()
 
 
-async def _release_inventory(session: AsyncSession, mandate: IntentMandate) -> None:
+async def _release_inventory(session: AsyncSession, mandate: IntentMandate, merchant_id: uuid.UUID) -> None:
     quantities: dict[str, int] = {}
     for item in mandate.cart:
         quantities[item.sku] = quantities.get(item.sku, 0) + item.quantity
-    rows = await session.execute(select(Product).where(Product.sku.in_(quantities)))
+    rows = await session.execute(select(Product).where(Product.sku.in_(quantities), Product.merchant_id == merchant_id))
     products = {product.sku: product for product in rows.scalars().all()}
     for sku, quantity in quantities.items():
         if sku in products:
             products[sku].stock_quantity += quantity
     await session.flush()
+
+
+async def _snapshot_items(
+    session: AsyncSession, ledger: AuditLedger, mandate: IntentMandate, merchant_id: uuid.UUID
+) -> None:
+    rows = await session.execute(
+        select(Product).where(Product.sku.in_({item.sku for item in mandate.cart}), Product.merchant_id == merchant_id)
+    )
+    products = {product.sku: product for product in rows.scalars().all()}
+    session.add_all([
+        TransactionItem(
+            transaction_id=ledger.transaction_id,
+            sku=item.sku,
+            name=products[item.sku].name,
+            quantity=item.quantity,
+            unit_price=products[item.sku].price,
+        )
+        for item in mandate.cart
+    ])
 
 
 def _response(ledger: AuditLedger, explanation: str) -> TransactionResponse:
@@ -143,10 +167,12 @@ def _response(ledger: AuditLedger, explanation: str) -> TransactionResponse:
 async def transactions(
     session: AsyncSession = Depends(get_session),
     limit: int = Query(default=100, ge=1, le=500),
+    merchant: Merchant = Depends(get_current_merchant),
 ) -> list[TransactionResponse]:
     """Return recent durable transactions for the operator console."""
     rows = await session.execute(
         select(AuditLedger)
+        .where(AuditLedger.merchant_id == merchant.id)
         .order_by(AuditLedger.timestamp.desc())
         .limit(limit)
     )
@@ -157,6 +183,7 @@ async def transactions(
 async def prepare_checkout(
     mandate: CheckoutPrepareRequest,
     session: AsyncSession = Depends(get_session),
+    merchant: Merchant = Depends(get_current_merchant),
 ) -> CheckoutPrepareResponse:
     """Validate a merchant checkout and create an unpaid Razorpay order."""
     full_mandate = IntentMandate(
@@ -166,7 +193,7 @@ async def prepare_checkout(
         currency=mandate.currency,
         payment_method={"provider": "razorpay", "token": "checkout_pending"},
     )
-    guardrails = GuardrailEngine(session=session, settings=await get_policy(session))
+    guardrails = GuardrailEngine(session=session, settings=await get_policy(session, merchant.id))
     policy = await guardrails.evaluate_mandate(full_mandate)
     if not policy.approved:
         raise HTTPException(status_code=422, detail=policy.reason)
@@ -178,9 +205,10 @@ async def prepare_checkout(
         requested_amount=policy.total_amount,
         policy_status=policy.policy_status,
         execution_status=ExecutionStatus.PENDING_PAYMENT,
+        merchant_id=merchant.id,
     )
     try:
-        await _reserve_inventory(session, full_mandate)
+        await _reserve_inventory(session, full_mandate, merchant.id)
         order = RazorpayClient().create_order(
             amount_in_paise=RazorpayClient.to_paise(policy.total_amount),
             currency=mandate.currency,
@@ -188,6 +216,7 @@ async def prepare_checkout(
         )
         ledger.razorpay_order_id = order.get("id")
         session.add(ledger)
+        await _snapshot_items(session, ledger, full_mandate, merchant.id)
         await session.commit()
     except (RazorpayError, ValueError) as exc:
         await session.rollback()
@@ -236,15 +265,25 @@ async def razorpay_webhook(request: Request, session: AsyncSession = Depends(get
     if not RazorpayClient.verify_webhook_signature(body, signature, get_settings().razorpay_webhook_secret):
         raise HTTPException(status_code=400, detail="Invalid Razorpay webhook signature.")
     payload = json.loads(body)
+    provider_event_id = payload.get("id") or hashlib.sha256(body).hexdigest()
+    if await session.scalar(select(PaymentEvent).where(PaymentEvent.provider_event_id == provider_event_id)):
+        return
+    session.add(PaymentEvent(
+        provider="razorpay", provider_event_id=provider_event_id,
+        event_type=payload.get("event", "unknown"),
+    ))
     if payload.get("event") != "payment.captured":
+        await session.commit()
         return
     entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
     order_id = entity.get("order_id")
     payment_id = entity.get("id")
     if not order_id or not payment_id:
+        await session.commit()
         return
     ledger = await session.scalar(select(AuditLedger).where(AuditLedger.razorpay_order_id == order_id))
     if ledger is None or ledger.execution_status == ExecutionStatus.SETTLED:
+        await session.commit()
         return
     ledger.razorpay_payment_id = payment_id
     ledger.execution_status = ExecutionStatus.SETTLED
@@ -253,6 +292,7 @@ async def razorpay_webhook(request: Request, session: AsyncSession = Depends(get
 async def transact(
     mandate: IntentMandate,
     session: AsyncSession = Depends(get_session),
+    merchant: Merchant = Depends(get_current_merchant),
 ) -> TransactionResponse:
     """Execute an AP2 mandate through policy, inventory and payment rails."""
     intent_hash = GuardrailEngine.intent_hash(mandate)
@@ -262,12 +302,13 @@ async def transact(
         intent_hash=intent_hash,
         requested_amount=_cart_amount(mandate),
         execution_status=ExecutionStatus.INITIATED,
+        merchant_id=merchant.id,
     )
     session.add(ledger)
     await session.flush()
     await _publish(ledger, "Mandate parsed and audit ledger initialized.")
 
-    guardrails = GuardrailEngine(session=session, settings=await get_policy(session))
+    guardrails = GuardrailEngine(session=session, settings=await get_policy(session, merchant.id))
     policy = await guardrails.evaluate_mandate(mandate)
     ledger.policy_status = policy.policy_status
     ledger.requested_amount = policy.total_amount
@@ -281,7 +322,8 @@ async def transact(
         return _response(ledger, policy.reason)
 
     try:
-        await _reserve_inventory(session, mandate)
+        await _reserve_inventory(session, mandate, merchant.id)
+        await _snapshot_items(session, ledger, mandate, merchant.id)
         ledger.execution_status = ExecutionStatus.GATED
         await session.flush()
         await _publish(ledger, "Guardrails passed and inventory was reserved.")
@@ -297,7 +339,7 @@ async def transact(
         await _publish(ledger, "Razorpay order created.")
 
         async def release_reserved_inventory(_: IntentMandate) -> None:
-            await _release_inventory(session, mandate)
+            await _release_inventory(session, mandate, merchant.id)
 
         recovery = RecoveryEngine(
             razorpay_client=razorpay,
@@ -310,7 +352,7 @@ async def transact(
         await _publish(ledger, result.explanation)
         return _response(ledger, result.explanation)
     except (RazorpayError, ValueError) as exc:
-        await _release_inventory(session, mandate)
+        await _release_inventory(session, mandate, merchant.id)
         ledger.execution_status = ExecutionStatus.TERMINATED
         ledger.failure_reason = str(exc)
         await session.commit()

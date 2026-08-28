@@ -446,7 +446,7 @@ Use Razorpay test keys until the complete payment and webhook flow has been veri
 
 ## 11. Local MySQL Setup
 
-Accord uses MySQL by default. Start the local server, install the async MySQL driver, create the database/user, then configure the connection:
+Accord uses MySQL by default. Start the local server, install the async MySQL driver, create the database/user, then configure the connection. On first launch, create a merchant owner account in the Accord sign-in screen before accessing the catalog or transaction APIs:
 
 ```bash
 sudo service mysql start

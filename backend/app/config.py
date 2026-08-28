@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     razorpay_key_id: str | None = None
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
+    auth_secret: str = "development-only-change-this-auth-secret"
 
     model_config = SettingsConfigDict(env_file=("backend/.env", ".env"), extra="ignore")
 

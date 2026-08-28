@@ -8,6 +8,7 @@ import { TransactionsTab } from '../components/TransactionsTab';
 import { CatalogTab } from '../components/CatalogTab';
 import { PolicyTab } from '../components/PolicyTab';
 import { ProfileTab } from '../components/ProfileTab';
+import { AuthScreen } from '../components/AuthScreen';
 import {
   INITIAL_POLICY,
   INITIAL_USER_PROFILE,
@@ -22,8 +23,10 @@ export default function AccordConsolePage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<UserProfile>(INITIAL_USER_PROFILE);
+  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem('accord_access_token'));
 
   useEffect(() => {
+    if (!authToken) { setIsLoading(false); return; }
     Promise.all([getCatalog(), getTransactions(), getPolicy()])
       .then(([catalog, transactions, livePolicy]) => {
         setProducts(mapCatalog(catalog));
@@ -33,7 +36,9 @@ export default function AccordConsolePage() {
       })
       .catch((error: Error) => setApiError(error.message))
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [authToken]);
+
+  if (!authToken) return <AuthScreen onAuthenticated={setAuthToken} />;
 
   const handleAddEvent = (newEvent: AuditLogEvent) => {
     setEvents((prev) => [newEvent, ...prev]);

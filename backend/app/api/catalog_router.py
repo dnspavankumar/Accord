@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session
 from ..models.product import Product
+from ..models import Merchant
+from ..security import get_current_merchant
 
 router = APIRouter(prefix="/api/v1/merchant/catalog", tags=["Merchant Catalog"])
 
@@ -52,8 +54,9 @@ class ProductUpdate(BaseModel):
 @router.get("", response_model=list[MerchantProduct])
 async def list_merchant_products(
     session: AsyncSession = Depends(get_session),
+    merchant: Merchant = Depends(get_current_merchant),
 ) -> list[MerchantProduct]:
-    rows = await session.execute(select(Product).order_by(Product.sku))
+    rows = await session.execute(select(Product).where(Product.merchant_id == merchant.id).order_by(Product.sku))
     return [MerchantProduct.model_validate(product) for product in rows.scalars().all()]
 
 
@@ -61,10 +64,11 @@ async def list_merchant_products(
 async def create_merchant_product(
     product_input: ProductInput,
     session: AsyncSession = Depends(get_session),
+    merchant: Merchant = Depends(get_current_merchant),
 ) -> MerchantProduct:
     if await session.get(Product, product_input.sku):
         raise HTTPException(status_code=409, detail="A product with this SKU already exists.")
-    product = Product(**product_input.model_dump())
+    product = Product(**product_input.model_dump(), merchant_id=merchant.id)
     session.add(product)
     await session.commit()
     await session.refresh(product)
@@ -76,8 +80,11 @@ async def update_merchant_product(
     sku: str,
     product_input: ProductUpdate,
     session: AsyncSession = Depends(get_session),
+    merchant: Merchant = Depends(get_current_merchant),
 ) -> MerchantProduct:
     product = await session.get(Product, sku)
+    if product is not None and product.merchant_id != merchant.id:
+        product = None
     if product is None:
         raise HTTPException(status_code=404, detail="Product not found.")
     for field, value in product_input.model_dump(exclude_unset=True).items():
@@ -91,8 +98,11 @@ async def update_merchant_product(
 async def archive_merchant_product(
     sku: str,
     session: AsyncSession = Depends(get_session),
+    merchant: Merchant = Depends(get_current_merchant),
 ) -> None:
     product = await session.get(Product, sku)
+    if product is not None and product.merchant_id != merchant.id:
+        product = None
     if product is None:
         raise HTTPException(status_code=404, detail="Product not found.")
     product.is_active = False

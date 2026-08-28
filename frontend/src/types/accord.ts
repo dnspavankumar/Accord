@@ -85,6 +85,13 @@ export interface MerchantProductInput {
   category: string;
 }
 
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user_id: string;
+  merchant_id: string;
+}
+
 export interface CheckoutPrepareResponse {
   transaction_id: string;
   order_id: string;

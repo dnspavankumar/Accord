@@ -1,8 +1,9 @@
 """Merchant product persistence model used by the AP2 catalog."""
 
 from decimal import Decimal
+import uuid
 
-from sqlalchemy import Boolean, Integer, Numeric, String
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .ledger import Base
@@ -12,6 +13,7 @@ class Product(Base):
     __tablename__ = "products"
 
     sku: Mapped[str] = mapped_column(String(128), primary_key=True)
+    merchant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("merchants.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)

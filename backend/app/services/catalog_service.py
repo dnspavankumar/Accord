@@ -2,14 +2,15 @@
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+import uuid
 
 from ..models.product import Product
 from ..schemas.ap2_catalog import AP2Catalog, AP2Offer, AP2Product
 
 
-async def get_catalog(session: AsyncSession) -> AP2Catalog:
+async def get_catalog(session: AsyncSession, merchant_id: uuid.UUID) -> AP2Catalog:
     rows = await session.execute(
-        select(Product).where(Product.is_active.is_(True)).order_by(Product.sku)
+        select(Product).where(Product.merchant_id == merchant_id, Product.is_active.is_(True)).order_by(Product.sku)
     )
     products = []
     for product in rows.scalars().all():
