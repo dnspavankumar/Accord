@@ -187,7 +187,7 @@ async def prepare_checkout(
         currency=mandate.currency,
         payment_method={"provider": "razorpay", "token": "checkout_pending"},
     )
-    guardrails = GuardrailEngine(session=session, settings=get_policy())
+    guardrails = GuardrailEngine(session=session, settings=await get_policy(session))
     policy = await guardrails.evaluate_mandate(full_mandate)
     if not policy.approved:
         raise HTTPException(status_code=422, detail=policy.reason)
@@ -306,7 +306,7 @@ async def transact(
     await session.flush()
     await _publish(ledger, "Mandate parsed and audit ledger initialized.")
 
-    guardrails = GuardrailEngine(session=session, settings=get_policy())
+    guardrails = GuardrailEngine(session=session, settings=await get_policy(session))
     policy = await guardrails.evaluate_mandate(mandate)
     ledger.policy_status = policy.policy_status
     ledger.requested_amount = policy.total_amount

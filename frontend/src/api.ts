@@ -48,9 +48,24 @@ export const confirmCheckout = (transactionId: string, payment: { razorpay_payme
   request<AuditLogEvent>(`/api/v1/accord/merchant/checkout/${transactionId}/confirm`, { method: 'POST', body: JSON.stringify(payment) });
 export const getTransactions = async () =>
   (await request<AuditLogEvent[]>('/api/v1/accord/transactions')).map(mapTransaction);
-export const getPolicy = () => request<GuardrailPolicy>('/api/v1/accord/policy');
-export const updatePolicy = (policy: GuardrailPolicy) =>
-  request<GuardrailPolicy>('/api/v1/accord/policy', { method: 'PUT', body: JSON.stringify(policy) });
+function mapPolicy(policy: Record<string, number | string>): GuardrailPolicy {
+  return {
+    max_transaction_limit_inr: Number(policy.max_transaction_limit_inr),
+    max_item_quantity: Number(policy.max_item_quantity ?? policy.max_quantity_per_item),
+    velocity_limit_per_hour: Number(policy.velocity_limit_per_hour ?? policy.velocity_limit),
+  };
+}
+export const getPolicy = async () => mapPolicy(await request<Record<string, number | string>>('/api/v1/accord/policy'));
+export const updatePolicy = async (policy: GuardrailPolicy) => mapPolicy(await request<Record<string, number | string>>('/api/v1/accord/policy', {
+  method: 'PUT',
+  body: JSON.stringify({
+    max_transaction_limit_inr: policy.max_transaction_limit_inr,
+    max_quantity_per_item: policy.max_item_quantity,
+    velocity_limit: policy.velocity_limit_per_hour,
+    allowed_currency: 'INR',
+    velocity_window_seconds: 3600,
+  }),
+}));
 export const getMerchantDashboard = async () => {
   const dashboard = await request<MerchantDashboard>('/api/v1/accord/merchant/dashboard');
   return {

@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .config import get_settings
-from .models import Base, Product
+from .models import Base, PolicyConfig, Product
+from .schemas.policy import PolicySettings
 
 settings = get_settings()
 engine = create_async_engine(settings.database_url, future=True)
@@ -80,7 +81,17 @@ async def init_db() -> None:
         ]
         if missing_products:
             session.add_all(missing_products)
-            await session.commit()
+        if await session.get(PolicyConfig, 1) is None:
+            defaults = PolicySettings()
+            session.add(PolicyConfig(
+                id=1,
+                max_transaction_limit_inr=defaults.max_transaction_limit_inr,
+                max_quantity_per_item=defaults.max_quantity_per_item,
+                allowed_currency=defaults.allowed_currency,
+                velocity_limit=defaults.velocity_limit,
+                velocity_window_seconds=defaults.velocity_window_seconds,
+            ))
+        await session.commit()
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

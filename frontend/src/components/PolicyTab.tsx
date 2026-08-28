@@ -12,29 +12,45 @@ interface PolicyTabProps {
 export const PolicyTab: React.FC<PolicyTabProps> = ({ policy, onSavePolicy }) => {
   const [formData, setFormData] = useState<GuardrailPolicy>({ ...policy });
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveSuccess(false);
     try {
       const saved = await updatePolicy(formData);
+      setFormData(saved);
       onSavePolicy(saved);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
-    } catch {
+    } catch (error) {
       setSaveSuccess(false);
+      setSaveError(error instanceof Error ? error.message : 'Unable to save policy changes.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleResetDefaults = () => {
+  const handleResetDefaults = async () => {
     const defaults: GuardrailPolicy = {
       max_transaction_limit_inr: 25000,
       max_item_quantity: 5,
       velocity_limit_per_hour: 30,
     };
     setFormData(defaults);
-    onSavePolicy(defaults);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
+    setSaveError(null);
+    try {
+      const saved = await updatePolicy(defaults);
+      setFormData(saved);
+      onSavePolicy(saved);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Unable to reset policy changes.');
+    }
   };
 
   return (
@@ -251,6 +267,11 @@ export const PolicyTab: React.FC<PolicyTabProps> = ({ policy, onSavePolicy }) =>
             <span className="text-[10px] text-zinc-400 font-semibold">HOT RELOAD OK</span>
           </div>
         )}
+        {saveError && (
+          <div className="bg-rose-50 text-rose-700 font-sans text-xs p-3.5 border border-rose-300">
+            POLICY SAVE FAILED: {saveError}
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex items-center justify-between pt-4">
@@ -264,9 +285,10 @@ export const PolicyTab: React.FC<PolicyTabProps> = ({ policy, onSavePolicy }) =>
 
           <button
             type="submit"
+            disabled={isSaving}
             className="bg-zinc-900 text-white font-sans text-xs font-bold uppercase tracking-wider px-6 py-3 rounded-none hover:bg-black transition-colors"
           >
-            SAVE POLICY CHANGES
+            {isSaving ? 'SAVING POLICY...' : 'SAVE POLICY CHANGES'}
           </button>
         </div>
       </form>
