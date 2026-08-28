@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
     auth_secret: str = "development-only-change-this-auth-secret"
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen3:0.6b"
+    demo_data: bool = True
 
     model_config = SettingsConfigDict(env_file=("backend/.env", ".env"), extra="ignore")
 

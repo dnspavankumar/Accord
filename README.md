@@ -462,3 +462,20 @@ Update `backend/.env` with the same password used by `ACCORD_DB_PASSWORD`, then 
 # Accord
 # Accord
 # Accord
+
+## Local Qwen agent assistance
+
+Accord can use the locally installed Ollama model `qwen3:0.6b` to turn a natural-language request into a purchase draft. The draft is checked against the live merchant catalog and must still be reviewed and paid for; the LLM cannot authorize payment.
+
+Start Ollama in another terminal and verify the model:
+
+```bash
+ollama serve
+ollama list
+```
+
+The Catalog screen provides **ASK QWEN**. The API equivalent is an authenticated `POST /api/v1/accord/agent/draft` with `{"request":"one motor for testing"}`. Configure `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in `backend/.env` if needed.
+
+## Development demo data
+
+When `ENVIRONMENT` is anything other than `production` and `DEMO_DATA=true`, startup/account creation adds one clearly-labelled demo product and settled sample transaction per merchant. It is idempotent and exists only to make local testing useful. Production startup always skips it. Set `DEMO_DATA=false` for a clean local database.

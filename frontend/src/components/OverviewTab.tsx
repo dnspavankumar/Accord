@@ -15,12 +15,17 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 }) => {
   // Computed Top Metrics
   const settledEvents = events.filter((e) => e.execution_status === 'SETTLED');
-  const totalSettledInr = settledEvents.reduce((acc, curr) => acc + curr.requested_amount, 0);
+  // MySQL DECIMAL values may arrive as strings through API/event updates.
+  // Normalize at the aggregation boundary so `+` never performs concatenation.
+  const totalSettledInr = settledEvents.reduce((acc, curr) => {
+    const amount = Number(curr.requested_amount);
+    return acc + (Number.isFinite(amount) ? amount : 0);
+  }, 0);
   
   const distinctAgents = new Set(events.map((e) => e.buyer_agent_id)).size;
   
   const gateRejections = events.filter(
-    (e) => e.execution_status === 'GATED' || e.policy_status.startsWith('REJECTED')
+    (e) => e.execution_status === 'GATED' || Boolean(e.policy_status?.startsWith('REJECTED'))
   ).length;
 
   const railRecoveries = events.filter(
@@ -92,7 +97,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             TOTAL SETTLED (INR)
           </div>
           <div className="font-sans text-3xl font-bold text-zinc-900 tabular-nums">
-            ₹{totalSettledInr.toLocaleString('en-IN')}
+            ₹{totalSettledInr.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div className="font-sans text-[11px] text-zinc-500 mt-2">
             {settledEvents.length} settled mandates

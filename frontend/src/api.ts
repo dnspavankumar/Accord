@@ -1,4 +1,4 @@
-import { AuditLogEvent, AuthResponse, BackendCatalog, CheckoutPrepareResponse, GuardrailPolicy, IntentMandate, MerchantProductInput, Product } from './types/accord';
+import { AgentDraftResponse, AuditLogEvent, AuthResponse, BackendCatalog, CheckoutPrepareResponse, GuardrailPolicy, IntentMandate, MerchantProductInput, Product } from './types/accord';
 
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -50,6 +50,8 @@ export const prepareCheckout = (input: Omit<IntentMandate, 'payment_method'>) =>
   request<CheckoutPrepareResponse>('/api/v1/accord/merchant/checkout/prepare', { method: 'POST', body: JSON.stringify(input) });
 export const confirmCheckout = (transactionId: string, payment: { razorpay_payment_id: string; razorpay_signature: string }) =>
   request<AuditLogEvent>(`/api/v1/accord/merchant/checkout/${transactionId}/confirm`, { method: 'POST', body: JSON.stringify(payment) });
+export const draftWithAgent = (requestText: string) =>
+  request<AgentDraftResponse>('/api/v1/accord/agent/draft', { method: 'POST', body: JSON.stringify({ request: requestText }) });
 export const getTransactions = async () =>
   (await request<AuditLogEvent[]>('/api/v1/accord/transactions')).map(mapTransaction);
 function mapPolicy(policy: Record<string, number | string>): GuardrailPolicy {

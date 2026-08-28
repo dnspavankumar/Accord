@@ -1,12 +1,15 @@
 """Async SQLite engine, session dependency, and local catalog bootstrap."""
 
 from collections.abc import AsyncGenerator
+from decimal import Decimal
+import hashlib
+import uuid
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .config import get_settings
-from .models import Base, Product
+from .models import AuditLedger, Base, ExecutionStatus, Merchant, PolicyStatus, Product, TransactionItem
 
 settings = get_settings()
 engine = create_async_engine(settings.database_url, future=True)
@@ -106,7 +109,47 @@ async def init_db() -> None:
         ]
         if missing_products:
             session.add_all(missing_products)
+        if settings.demo_data and settings.environment.lower() != "production":
+            merchants = (await session.scalars(select(Merchant.id))).all()
+            for merchant_id in merchants:
+                await seed_demo_data_for_merchant(session, merchant_id)
         await session.commit()
+
+
+async def seed_demo_data_for_merchant(session: AsyncSession, merchant_id: uuid.UUID) -> None:
+    """Add one clearly-labelled demo item and transaction, once per local merchant."""
+    if not settings.demo_data or settings.environment.lower() == "production":
+        return
+    suffix = merchant_id.hex[:8]
+    sku = f"DEMO-SERVO-{suffix}"
+    if await session.scalar(select(Product).where(Product.sku == sku)):
+        return
+    product = Product(
+        sku=sku,
+        merchant_id=merchant_id,
+        name="Demo Industrial Servo Motor",
+        description="Development-only sample product for testing catalog and checkout flows.",
+        price=Decimal("4500.00"), currency="INR", stock_quantity=20,
+        category="Demo / Testing", is_active=True,
+    )
+    session.add(product)
+    await session.flush()
+    transaction_id = uuid.uuid4()
+    session.add(AuditLedger(
+        transaction_id=transaction_id,
+        merchant_id=merchant_id,
+        buyer_agent_id="demo-agent",
+        intent_hash=hashlib.sha256(f"demo-{merchant_id}".encode()).hexdigest(),
+        requested_amount=product.price,
+        policy_status=PolicyStatus.APPROVED,
+        razorpay_payment_id=f"pay_demo_{suffix}",
+        execution_status=ExecutionStatus.SETTLED,
+    ))
+    await session.flush()
+    session.add(TransactionItem(
+        transaction_id=transaction_id, sku=product.sku, name=product.name,
+        quantity=1, unit_price=product.price,
+    ))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

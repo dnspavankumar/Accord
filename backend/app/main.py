@@ -11,6 +11,7 @@ from .api.transact_router import router as transact_router
 from .api.policy_router import router as policy_router
 from .api.catalog_router import router as catalog_router
 from .api.auth_router import router as auth_router
+from .api.agent_router import router as agent_router
 from .database import init_db
 
 
@@ -38,6 +39,7 @@ app.include_router(transact_router)
 app.include_router(policy_router)
 app.include_router(catalog_router)
 app.include_router(auth_router)
+app.include_router(agent_router)
 app.include_router(telemetry_router)
 
 

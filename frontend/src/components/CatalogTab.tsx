@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Product, GuardrailPolicy, AuditLogEvent, MerchantProductInput } from '../types/accord';
-import { archiveMerchantProduct, confirmCheckout, createMerchantProduct, prepareCheckout, updateMerchantProduct } from '../api';
+import { archiveMerchantProduct, confirmCheckout, createMerchantProduct, draftWithAgent, prepareCheckout, updateMerchantProduct } from '../api';
 
 interface CatalogTabProps {
   products: Product[];
@@ -28,6 +28,10 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [editingSku, setEditingSku] = useState<string | null>(null);
   const [productError, setProductError] = useState<string | null>(null);
+  const [agentRequest, setAgentRequest] = useState('');
+  const [agentDraft, setAgentDraft] = useState<string | null>(null);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [isDrafting, setIsDrafting] = useState(false);
   const [newProduct, setNewProduct] = useState<MerchantProductInput>({
     sku: '', name: '', description: '', price: 0, stock_quantity: 0, category: '',
   });
@@ -80,6 +84,22 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
     } catch (error) {
       setProductError(error instanceof Error ? error.message : 'Unable to archive product.');
     }
+  };
+
+  const handleAgentDraft = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsDrafting(true); setAgentError(null); setAgentDraft(null);
+    try {
+      const draft = await draftWithAgent(agentRequest);
+      const product = products.find((item) => item.sku === draft.sku);
+      if (!product) throw new Error('The suggested product is no longer in this catalog.');
+      setSelectedProduct(product);
+      setTestQuantity(draft.quantity);
+      setAgentDraft(`${draft.product_name} × ${draft.quantity} — ${draft.reason}`);
+      setAgentRequest('');
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : 'Unable to reach the local Ollama model.');
+    } finally { setIsDrafting(false); }
   };
 
   const handleRunAgentMandate = async () => {
@@ -230,6 +250,19 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
       </div>
 
       {productError && <div className="border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700">{productError}</div>}
+
+      <form onSubmit={handleAgentDraft} className="border border-zinc-200 bg-white p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="font-sans text-xs font-bold uppercase tracking-wider text-zinc-900">ASK LOCAL QWEN TO FIND A PRODUCT</span>
+          <span className="font-sans text-[10px] uppercase tracking-wider text-zinc-400">DRAFT ONLY · NO PAYMENT</span>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input required minLength={2} value={agentRequest} onChange={(e) => setAgentRequest(e.target.value)} placeholder="e.g. I need one motor for testing" className="flex-1 border border-zinc-300 px-3 py-2 text-sm font-sans" />
+          <button disabled={isDrafting} className="bg-zinc-900 text-white font-sans text-xs font-bold uppercase tracking-wider px-4 py-2 disabled:opacity-50">{isDrafting ? 'ASKING QWEN...' : 'ASK QWEN'}</button>
+        </div>
+        {agentDraft && <div className="border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">DRAFT READY: {agentDraft}. Review the checkout modal before paying.</div>}
+        {agentError && <div className="border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700">{agentError}</div>}
+      </form>
 
       {showAddProduct && (
         <form onSubmit={handleAddProduct} className="bg-white border border-zinc-200 p-6 space-y-4">

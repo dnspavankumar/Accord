@@ -101,6 +101,18 @@ export interface CheckoutPrepareResponse {
   status: ExecutionStatus;
 }
 
+export interface AgentDraftResponse {
+  model: string;
+  sku: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number | string;
+  total_amount: number | string;
+  reason: string;
+  payment_required: boolean;
+  message: string;
+}
+
 export interface GuardrailPolicy {
   max_transaction_limit_inr: number;
   max_item_quantity: number;
