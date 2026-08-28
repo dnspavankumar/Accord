@@ -12,6 +12,7 @@ pydantic-ai>=0.0.14
 # Async database and ORM
 sqlalchemy>=2.0.28
 aiosqlite>=0.20.0
+aiomysql>=0.2.0
 
 # Payment integration and local simulation
 razorpay>=1.4.1

@@ -443,6 +443,21 @@ Use Razorpay test keys until the complete payment and webhook flow has been veri
 - [ ] Use PostgreSQL or another production database instead of local SQLite.
 - [ ] Add authentication and merchant tenancy before exposing the API publicly.
 - [ ] Configure HTTPS, CORS origins, logging, backups, and payment reconciliation.
+
+## 11. Local MySQL Setup
+
+Accord uses MySQL by default. Start the local server, install the async MySQL driver, create the database/user, then configure the connection:
+
+```bash
+sudo service mysql start
+cd accord
+.venv/bin/pip install -r backend/requirements.txt
+chmod +x backend/setup_mysql.sh
+ACCORD_DB_PASSWORD='choose-a-local-password' ./backend/setup_mysql.sh
+cp backend/.env.example backend/.env
+```
+
+Update `backend/.env` with the same password used by `ACCORD_DB_PASSWORD`, then run `./start.sh`. Accord creates its tables and seed catalog automatically in the MySQL `accord` database. The previous SQLite file is intentionally left untouched as a fallback during migration.
 # Accord
 # Accord
 # Accord
