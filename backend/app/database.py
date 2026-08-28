@@ -64,6 +64,15 @@ DEFAULT_PRODUCTS = (
     ),
 )
 
+ADDITIONAL_LOCAL_PRODUCTS = (
+    ("EDGE-GATEWAY-01", "Secure Edge API Gateway Node", "Dedicated API gateway node with request signing and rate limiting.", Decimal("3200.00"), 30, "Edge Infrastructure"),
+    ("VECTOR-SHARD-01", "Managed Vector Search Shard", "NVMe-backed vector search shard for production semantic retrieval workloads.", Decimal("9600.00"), 10, "Storage & Vector Index"),
+    ("AGENT-AUDIT-01", "Agent Activity Audit Package", "Monthly audit and trace package for autonomous agent operations.", Decimal("2400.00"), 75, "Security Protocol"),
+    ("DATA-PIPELINE-01", "Real-time Data Pipeline Connector", "Managed connector for reliable event ingestion and transformation.", Decimal("6800.00"), 18, "Data Infrastructure"),
+    ("GPU-BURST-01", "GPU Inference Burst Pack", "Short-duration GPU inference capacity for traffic spikes and experiments.", Decimal("5100.00"), 40, "Hardware Compute / Cloud Node"),
+    ("WORKFLOW-RUNNER-01", "Autonomous Workflow Runner License", "Monthly license for isolated, policy-aware workflow execution.", Decimal("3999.00"), 60, "Agent Runtime"),
+)
+
 
 async def init_db() -> None:
     """Create tables and seed a catalog for a fresh local database."""
@@ -112,6 +121,7 @@ async def init_db() -> None:
         if settings.demo_data and settings.environment.lower() != "production":
             merchants = (await session.scalars(select(Merchant.id))).all()
             for merchant_id in merchants:
+                await seed_additional_local_products(session, merchant_id)
                 await seed_demo_data_for_merchant(session, merchant_id)
         await session.commit()
 
@@ -150,6 +160,22 @@ async def seed_demo_data_for_merchant(session: AsyncSession, merchant_id: uuid.U
         transaction_id=transaction_id, sku=product.sku, name=product.name,
         quantity=1, unit_price=product.price,
     ))
+
+
+async def seed_additional_local_products(session: AsyncSession, merchant_id: uuid.UUID) -> None:
+    """Add useful development catalog entries once for each local merchant."""
+    if not settings.demo_data or settings.environment.lower() == "production":
+        return
+    suffix = merchant_id.hex[:8]
+    for base_sku, name, description, price, stock, category in ADDITIONAL_LOCAL_PRODUCTS:
+        sku = f"{base_sku}-{suffix}"
+        if await session.scalar(select(Product).where(Product.sku == sku)):
+            continue
+        session.add(Product(
+            sku=sku, merchant_id=merchant_id, name=name, description=description,
+            price=price, currency="INR", stock_quantity=stock, category=category,
+            is_active=True,
+        ))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

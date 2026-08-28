@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import get_session, seed_demo_data_for_merchant
+from ..database import get_session, seed_additional_local_products, seed_demo_data_for_merchant
 from ..models import Merchant, MerchantRole, MerchantUser, PolicyConfig, Product, User
 from ..security import get_current_user, hash_password, issue_token, verify_password
 
@@ -44,6 +44,7 @@ async def register(request: RegisterRequest, session: AsyncSession = Depends(get
     await session.flush()
     session.add(MerchantUser(merchant_id=merchant.id, user_id=user.id, role=MerchantRole.OWNER))
     await session.execute(update(Product).where(Product.merchant_id.is_(None)).values(merchant_id=merchant.id))
+    await seed_additional_local_products(session, merchant.id)
     await seed_demo_data_for_merchant(session, merchant.id)
     session.add(PolicyConfig(
         merchant_id=merchant.id, max_transaction_limit_inr=25000,

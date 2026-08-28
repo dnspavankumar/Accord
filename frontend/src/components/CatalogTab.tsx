@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Product, GuardrailPolicy, AuditLogEvent, MerchantProductInput } from '../types/accord';
 import { archiveMerchantProduct, confirmCheckout, createMerchantProduct, draftWithAgent, prepareCheckout, updateMerchantProduct } from '../api';
 
@@ -23,6 +23,7 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
   const [testQuantity, setTestQuantity] = useState<number>(1);
   const [testAgentId, setTestAgentId] = useState<string>('agent_0x9b4c_arbitrage_v2');
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
+  const executionInFlight = useRef(false);
   const [executionResult, setExecutionResult] = useState<AuditLogEvent | null>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -93,26 +94,28 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
       const draft = await draftWithAgent(agentRequest);
       const product = products.find((item) => item.sku === draft.sku);
       if (!product) throw new Error('The suggested product is no longer in this catalog.');
-      setSelectedProduct(product);
-      setTestQuantity(draft.quantity);
       setAgentDraft(`${draft.product_name} × ${draft.quantity} — ${draft.reason}`);
       setAgentRequest('');
+      await handleRunAgentMandate(product, draft.quantity);
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : 'Unable to reach the local Ollama model.');
     } finally { setIsDrafting(false); }
   };
 
-  const handleRunAgentMandate = async () => {
-    if (!selectedProduct) return;
+  const handleRunAgentMandate = async (productOverride?: Product, quantityOverride?: number) => {
+    const product = productOverride ?? selectedProduct;
+    const quantity = quantityOverride ?? testQuantity;
+    if (!product || executionInFlight.current) return;
+    executionInFlight.current = true;
     setIsExecuting(true);
     setExecutionError(null);
 
-    const totalAmount = selectedProduct.price * testQuantity;
+    const totalAmount = product.price * quantity;
     try {
       const checkout = await prepareCheckout({
         protocol_version: 'AP2-2026',
         buyer_agent_id: testAgentId,
-        cart: [{ sku: selectedProduct.sku, quantity: testQuantity, unit_price: selectedProduct.price }],
+        cart: [{ sku: product.sku, quantity, unit_price: product.price }],
         max_authorized_amount: totalAmount,
         currency: 'INR',
       });
@@ -127,7 +130,7 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
             amount: checkout.amount_in_paise,
             currency: checkout.currency,
             name: 'Accord Merchant',
-            description: selectedProduct.name,
+            description: product.name,
             order_id: checkout.order_id,
             handler: async (response: { razorpay_payment_id: string; razorpay_signature: string }) => {
               try { resolve(await confirmCheckout(checkout.transaction_id, response)); } catch (error) { reject(error); }
@@ -144,83 +147,15 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
       }
       setExecutionResult(result);
       onExecuteAgentMandate?.(result);
+      setIsExecuting(false);
+      executionInFlight.current = false;
     } catch (error) {
       console.error('Mandate execution failed', error);
       setIsExecuting(false);
       setExecutionError(error instanceof Error ? error.message : 'Mandate execution failed.');
+      executionInFlight.current = false;
       return;
     }
-    const isExceedingCap = totalAmount > currentPolicy.max_transaction_limit_inr;
-    const isExceedingQty = testQuantity > currentPolicy.max_item_quantity;
-    const isRejected = isExceedingCap || isExceedingQty;
-
-    const txId = `tx_acc_${Math.random().toString(16).slice(2, 10)}`;
-    const randomHex = Array.from({ length: 64 }, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    ).join('');
-    const intentHash = `0x${randomHex}`;
-
-    let failureReason: string | null = null;
-    let policyStatus: 'APPROVED' | 'REJECTED_CAP' | 'REJECTED_VELOCITY' = 'APPROVED';
-
-    if (isExceedingCap) {
-      policyStatus = 'REJECTED_CAP';
-      failureReason = `POLICY_VIOLATION: Amount ₹${totalAmount.toLocaleString('en-IN')} exceeds limit of ₹${currentPolicy.max_transaction_limit_inr.toLocaleString('en-IN')}`;
-    } else if (isExceedingQty) {
-      policyStatus = 'REJECTED_CAP';
-      failureReason = `POLICY_VIOLATION: Quantity ${testQuantity} exceeds item limit of ${currentPolicy.max_item_quantity}`;
-    }
-
-    const eventResult: AuditLogEvent = {
-      transaction_id: txId,
-      timestamp: new Date().toISOString(),
-      buyer_agent_id: testAgentId,
-      intent_hash: intentHash,
-      requested_amount: totalAmount,
-      policy_status: policyStatus,
-      execution_status: isRejected ? 'GATED' : 'SETTLED',
-      razorpay_order_id: isRejected
-        ? null
-        : `order_RPZ_${Math.floor(10000000 + Math.random() * 90000000)}`,
-      razorpay_payment_id: isRejected
-        ? null
-        : `pay_RPZ_${Math.floor(10000000 + Math.random() * 90000000)}`,
-      failure_reason: failureReason,
-      ap2_mandate: {
-        protocol_version: 'AP2/1.0',
-        mandate_id: `mnd_${Math.floor(100000 + Math.random() * 900000)}`,
-        agent_public_key: `ed25519:${Math.random().toString(36).substring(2, 20)}`,
-        signature_algorithm: 'Ed25519-SHA256',
-        intent_spec: {
-          action: 'PURCHASE_ORDER',
-          item_sku: selectedProduct.sku,
-          item_name: selectedProduct.name,
-          quantity: testQuantity,
-          max_unit_price: selectedProduct.price,
-          currency: 'INR',
-        },
-      },
-      razorpay_payload: isRejected
-        ? undefined
-        : {
-            amount_in_paise: totalAmount * 100,
-            currency: 'INR',
-            receipt: `rcpt_accord_${txId.replace('tx_acc_', '')}`,
-            notes: {
-              agent_id: testAgentId,
-              protocol: 'AP2_M2M_GATEWAY',
-              intent_hash: intentHash,
-            },
-          },
-    };
-
-    setTimeout(() => {
-      setIsExecuting(false);
-      setExecutionResult(eventResult);
-      if (onExecuteAgentMandate) {
-        onExecuteAgentMandate(eventResult);
-      }
-    }, 600);
   };
 
   const loadRazorpayCheckout = () => new Promise<void>((resolve, reject) => {
@@ -253,14 +188,14 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
 
       <form onSubmit={handleAgentDraft} className="border border-zinc-200 bg-white p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="font-sans text-xs font-bold uppercase tracking-wider text-zinc-900">ASK LOCAL QWEN TO FIND A PRODUCT</span>
-          <span className="font-sans text-[10px] uppercase tracking-wider text-zinc-400">DRAFT ONLY · NO PAYMENT</span>
+          <span className="font-sans text-xs font-bold uppercase tracking-wider text-zinc-900">ASK TO BUY FROM CATALOG</span>
+          <span className="font-sans text-[10px] uppercase tracking-wider text-zinc-400">QWEN AGENT · RAZORPAY</span>
         </div>
         <div className="flex flex-col sm:flex-row gap-2">
           <input required minLength={2} value={agentRequest} onChange={(e) => setAgentRequest(e.target.value)} placeholder="e.g. I need one motor for testing" className="flex-1 border border-zinc-300 px-3 py-2 text-sm font-sans" />
-          <button disabled={isDrafting} className="bg-zinc-900 text-white font-sans text-xs font-bold uppercase tracking-wider px-4 py-2 disabled:opacity-50">{isDrafting ? 'ASKING QWEN...' : 'ASK QWEN'}</button>
+          <button disabled={isDrafting || isExecuting} className="bg-zinc-900 text-white font-sans text-xs font-bold uppercase tracking-wider px-4 py-2 disabled:opacity-50">{isDrafting || isExecuting ? 'BUYING...' : 'ASK'}</button>
         </div>
-        {agentDraft && <div className="border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">DRAFT READY: {agentDraft}. Review the checkout modal before paying.</div>}
+        {agentDraft && <div className="border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">AGENT PURCHASE: {agentDraft}. The request was sent through the payment flow.</div>}
         {agentError && <div className="border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-700">{agentError}</div>}
       </form>
 
@@ -496,7 +431,7 @@ export const CatalogTab: React.FC<CatalogTabProps> = ({
 
             <div className="flex items-center gap-3 pt-2">
               <button
-                onClick={handleRunAgentMandate}
+                onClick={() => handleRunAgentMandate()}
                 disabled={isExecuting}
                 className="flex-1 bg-zinc-900 hover:bg-black text-white font-sans text-xs font-bold uppercase tracking-wider px-4 py-3 rounded-none transition-colors disabled:opacity-50"
               >

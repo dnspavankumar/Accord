@@ -465,7 +465,7 @@ Update `backend/.env` with the same password used by `ACCORD_DB_PASSWORD`, then 
 
 ## Local Qwen agent assistance
 
-Accord can use the locally installed Ollama model `qwen3:0.6b` to turn a natural-language request into a purchase draft. The draft is checked against the live merchant catalog and must still be reviewed and paid for; the LLM cannot authorize payment.
+Accord can use the locally installed Ollama model `qwen3:0.6b` as a purchasing agent. It selects an item from the live merchant catalog, submits the validated cart through Accord, and uses the configured Razorpay flow. Local simulation can settle automatically; real Razorpay payments still require an authorized payment method and checkout authorization.
 
 Start Ollama in another terminal and verify the model:
 
@@ -474,7 +474,7 @@ ollama serve
 ollama list
 ```
 
-The Catalog screen provides **ASK QWEN**. The API equivalent is an authenticated `POST /api/v1/accord/agent/draft` with `{"request":"one motor for testing"}`. Configure `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in `backend/.env` if needed.
+The Catalog screen provides **ASK**. It runs the draft step and then starts checkout automatically. The API draft equivalent is an authenticated `POST /api/v1/accord/agent/draft` with `{"request":"one motor for testing"}`. Configure `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in `backend/.env` if needed.
 
 ## Development demo data
 
