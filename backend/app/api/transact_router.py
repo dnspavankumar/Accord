@@ -46,13 +46,6 @@ class TransactionResponse(BaseModel):
     recovery_attempted: bool
 
 
-class MerchantDashboardResponse(BaseModel):
-    received_amount: Decimal
-    received_payment_count: int
-    recovered_payment_count: int
-    payments: list[TransactionResponse]
-
-
 class CheckoutPrepareRequest(BaseModel):
     protocol_version: Literal["AP2-2026"] = "AP2-2026"
     buyer_agent_id: str
@@ -160,20 +153,6 @@ async def transactions(
     return [_response(ledger, ledger.failure_reason or "Transaction recorded.") for ledger in rows.scalars().all()]
 
 
-@router.get("/merchant/dashboard", response_model=MerchantDashboardResponse)
-async def merchant_dashboard(
-    session: AsyncSession = Depends(get_session),
-    limit: int = Query(default=50, ge=1, le=500),
-) -> MerchantDashboardResponse:
-    """Return payments received by the merchant from durable ledger records."""
-    rows = await session.execute(
-        select(AuditLedger)
-        .where(AuditLedger.razorpay_payment_id.is_not(None))
-        .order_by(AuditLedger.timestamp.desc())
-        .limit(limit)
-    )
-
-
 @router.post("/merchant/checkout/prepare", response_model=CheckoutPrepareResponse)
 async def prepare_checkout(
     mandate: CheckoutPrepareRequest,
@@ -270,24 +249,6 @@ async def razorpay_webhook(request: Request, session: AsyncSession = Depends(get
     ledger.razorpay_payment_id = payment_id
     ledger.execution_status = ExecutionStatus.SETTLED
     await session.commit()
-    ledgers = list(rows.scalars().all())
-    successful = [
-        ledger for ledger in ledgers
-        if ledger.execution_status in (ExecutionStatus.SETTLED, ExecutionStatus.FAILED_RECOVERED)
-    ]
-    return MerchantDashboardResponse(
-        received_amount=sum((ledger.requested_amount for ledger in successful), Decimal("0.00")),
-        received_payment_count=len(successful),
-        recovered_payment_count=sum(
-            ledger.execution_status == ExecutionStatus.FAILED_RECOVERED for ledger in successful
-        ),
-        payments=[
-            _response(ledger, ledger.failure_reason or "Payment received successfully.")
-            for ledger in successful
-        ],
-    )
-
-
 @router.post("/transact", response_model=TransactionResponse)
 async def transact(
     mandate: IntentMandate,

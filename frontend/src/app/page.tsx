@@ -8,7 +8,6 @@ import { TransactionsTab } from '../components/TransactionsTab';
 import { CatalogTab } from '../components/CatalogTab';
 import { PolicyTab } from '../components/PolicyTab';
 import { ProfileTab } from '../components/ProfileTab';
-import { MerchantTab } from '../components/MerchantTab';
 import {
   INITIAL_POLICY,
   INITIAL_USER_PROFILE,
@@ -86,8 +85,6 @@ export default function AccordConsolePage() {
             onSavePolicy={handleSavePolicy}
           />
         )}
-
-        {activeTab === 'merchant' && <MerchantTab />}
 
         {activeTab === 'profile' && (
           <ProfileTab

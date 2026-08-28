@@ -15,7 +15,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, onTabChange, user }) 
     { id: 'transactions', label: '02 Transactions' },
     { id: 'catalog', label: '03 Catalog' },
     { id: 'policy', label: '04 Policy Rules' },
-    { id: 'merchant', label: '05 Merchant Payments' },
   ];
 
   return (

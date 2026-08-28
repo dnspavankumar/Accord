@@ -1,4 +1,4 @@
-import { AuditLogEvent, BackendCatalog, CheckoutPrepareResponse, GuardrailPolicy, IntentMandate, MerchantDashboard, MerchantProductInput, Product } from './types/accord';
+import { AuditLogEvent, BackendCatalog, CheckoutPrepareResponse, GuardrailPolicy, IntentMandate, MerchantProductInput, Product } from './types/accord';
 
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -66,17 +66,6 @@ export const updatePolicy = async (policy: GuardrailPolicy) => mapPolicy(await r
     velocity_window_seconds: 3600,
   }),
 }));
-export const getMerchantDashboard = async () => {
-  const dashboard = await request<MerchantDashboard>('/api/v1/accord/merchant/dashboard');
-  return {
-    ...dashboard,
-    received_amount: Number(dashboard.received_amount),
-    payments: dashboard.payments.map((payment) => ({
-      ...payment,
-      requested_amount: Number(payment.requested_amount),
-    })),
-  };
-};
 export const executeMandate = (mandate: IntentMandate) =>
   request<AuditLogEvent>('/api/v1/accord/transact', {
     method: 'POST',

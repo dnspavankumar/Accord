@@ -76,13 +76,6 @@ export interface AuditLogEvent {
   };
 }
 
-export interface MerchantDashboard {
-  received_amount: number;
-  received_payment_count: number;
-  recovered_payment_count: number;
-  payments: AuditLogEvent[];
-}
-
 export interface MerchantProductInput {
   sku: string;
   name: string;
@@ -119,4 +112,4 @@ export interface UserProfile {
   created_at: string;
 }
 
-export type TabId = 'overview' | 'transactions' | 'catalog' | 'policy' | 'merchant' | 'profile';
+export type TabId = 'overview' | 'transactions' | 'catalog' | 'policy' | 'profile';
