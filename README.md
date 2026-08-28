@@ -435,14 +435,6 @@ RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
 
 Use Razorpay test keys until the complete payment and webhook flow has been verified. The local simulation remains available when credentials are absent. The merchant dashboard counts only transactions with a recorded payment ID as received money.
 
-### Production readiness checklist
-
-- [ ] Configure Razorpay test credentials and webhook URL.
-- [ ] Verify Checkout signature before marking a transaction settled.
-- [ ] Verify webhook signatures and process events idempotently.
-- [ ] Use PostgreSQL or another production database instead of local SQLite.
-- [ ] Add authentication and merchant tenancy before exposing the API publicly.
-- [ ] Configure HTTPS, CORS origins, logging, backups, and payment reconciliation.
 
 ## 11. Local MySQL Setup
 
@@ -458,10 +450,7 @@ cp backend/.env.example backend/.env
 ```
 
 Update `backend/.env` with the same password used by `ACCORD_DB_PASSWORD`, then run `./start.sh`. Accord creates its tables and seed catalog automatically in the MySQL `accord` database. The previous SQLite file is intentionally left untouched as a fallback during migration.
-# Accord
-# Accord
-# Accord
-# Accord
+
 
 ## Local Qwen agent assistance
 
